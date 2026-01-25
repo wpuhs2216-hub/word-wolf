@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ホストクラブ伝票計算（テスト版）</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+        h1 { text-align: center; color: #333; font-size: 1.5rem; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        select, input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; font-size: 1rem; }
+        .result-box { background-color: #333; color: #fff; padding: 20px; border-radius: 8px; text-align: center; }
+        .total-price { font-size: 2.5rem; font-weight: bold; color: #ffeb3b; }
+        .breakdown { text-align: left; font-size: 0.9rem; margin-top: 10px; border-top: 1px solid #555; padding-top: 10px; }
+        .row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .note { font-size: 0.8rem; color: #666; margin-top: 5px; }
+        .btn-reset { background: #ddd; border: none; padding: 10px 20px; width: 100%; border-radius: 5px; cursor: pointer; font-size: 1rem; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1>伝票計算システム</h1>
+
+    <div class="card">
+        <div class="form-group">
+            <label>客層タイプ</label>
+            <select id="customerType" onchange="calculate()">
+                <option value="initial">① 初回</option>
+                <option value="r_within">② R (2週間以内)</option>
+                <option value="r_after">③ R (2週間以降)</option>
+                <option value="regular">④ 正規</option>
+            </select>
+        </div>
+
+        <div class="form-group" id="entryTimeGroup" style="display:none;">
+            <label>入店時間 (正規のみ)</label>
+            <select id="entryTime" onchange="calculate()">
+                <option value="early">20:00 〜 20:59</option>
+                <option value="late">21:00 〜</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>指名</label>
+            <select id="nomination" onchange="calculate()">
+                <option value="0">なし</option>
+                <option value="1">あり</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>延長 (1時間単位)</label>
+            <input type="number" id="extensionCount" value="0" min="0" onchange="calculate()">
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>商品オーダー</h3>
+        <div class="row">
+            <span>カン (¥1,500)</span>
+            <input type="number" id="qty_can" value="0" min="0" style="width: 60px;" onchange="calculate()">
+        </div>
+        <div class="row" style="margin-top:10px;">
+            <span>ペットボトル (¥2,000)</span>
+            <input type="number" id="qty_pet" value="0" min="0" style="width: 60px;" onchange="calculate()">
+        </div>
+        <div class="row" style="margin-top:10px;">
+            <span>ショット (¥2,000)</span>
+            <input type="number" id="qty_shot" value="0" min="0" style="width: 60px;" onchange="calculate()">
+        </div>
+        <div class="row" style="margin-top:10px;">
+            <span>コカボム (¥3,000)</span>
+            <input type="number" id="qty_coca" value="0" min="0" style="width: 60px;" onchange="calculate()">
+        </div>
+    </div>
+
+    <div class="result-box">
+        <div>お会計 (税込)</div>
+        <div class="total-price" id="finalTotal">¥0</div>
+        
+        <div class="breakdown">
+            <div class="row"><span>小計</span><span id="subTotal">¥0</span></div>
+            <div class="row"><span>TAX/SVC (<span id="taxRateDisplay">35</span>%)</span><span id="taxAmount">¥0</span></div>
+            <div class="row" style="color:#aaa; font-size:0.8rem;">(十の位以下切り上げ)</div>
+        </div>
+    </div>
+
+    <button class="btn-reset" onclick="resetForm()">リセット</button>
+
+    <script>
+        // 設定データ
+        const PRICES = {
+            initial:  { set: 1000, ext: 2000, nom: 1000, tc: 0 },
+            r_within: { set: 0,    ext: 1000, nom: 1000, tc: 0 },
+            r_after:  { set: 2000, ext: 1000, nom: 1000, tc: 500 },
+            regular:  { ext: 3000, nom: 3000, tc: 500 } // セットは時間帯による
+        };
+
+        const MENU = {
+            can: 1500,
+            pet: 2000,
+            shot: 2000,
+            coca: 3000
+        };
+
+        function calculate() {
+            // 1. 入力値の取得
+            const type = document.getElementById('customerType').value;
+            const entryTime = document.getElementById('entryTime').value;
+            const hasNomination = parseInt(document.getElementById('nomination').value);
+            const extensionCount = parseInt(document.getElementById('extensionCount').value) || 0;
+            
+            const qCan = parseInt(document.getElementById('qty_can').value) || 0;
+            const qPet = parseInt(document.getElementById('qty_pet').value) || 0;
+            const qShot = parseInt(document.getElementById('qty_shot').value) || 0;
+            const qCoca = parseInt(document.getElementById('qty_coca').value) || 0;
+
+            // 正規の場合のみ時間入力表示
+            document.getElementById('entryTimeGroup').style.display = (type === 'regular') ? 'block' : 'none';
+
+            // 2. 基本料金計算
+            let setPrice = 0;
+            let extPrice = 0;
+            let nomPrice = 0;
+            let tcPrice = 0;
+
+            if (type === 'regular') {
+                // 正規の時間帯別セット料金
+                setPrice = (entryTime === 'early') ? 2000 : 5000;
+                extPrice = PRICES.regular.ext;
+                nomPrice = PRICES.regular.nom;
+                tcPrice = PRICES.regular.tc;
+            } else {
+                setPrice = PRICES[type].set;
+                extPrice = PRICES[type].ext;
+                nomPrice = PRICES[type].nom;
+                tcPrice = PRICES[type].tc;
+            }
+
+            // 3. 小計計算
+            const setTotal = setPrice; 
+            const extTotal = extPrice * extensionCount;
+            const nomTotal = hasNomination ? nomPrice : 0;
+            const tcTotal = tcPrice;
+            
+            const menuTotal = (qCan * MENU.can) + (qPet * MENU.pet) + (qShot * MENU.shot) + (qCoca * MENU.coca);
+            const totalItemsCount = qCan + qPet + qShot + qCoca;
+
+            const subTotal = setTotal + extTotal + nomTotal + tcTotal + menuTotal;
+
+            // 4. TAX計算 (35%)
+            let taxRate = 0.35;
+            
+            // 【特例】初回で、単価もの(menuTotal)がない場合はTAX 0
+            if (type === 'initial' && totalItemsCount === 0) {
+                taxRate = 0;
+            }
+
+            const taxAmountRaw = subTotal * taxRate;
+            const totalRaw = subTotal + taxAmountRaw;
+
+            // 5. 端数処理 (十の位以下切り上げ -> 100円単位にする)
+            // Math.ceil(12310 / 100) -> 124 -> * 100 -> 12400
+            const finalTotal = Math.ceil(totalRaw / 100) * 100;
+            const taxAmountDisplay = finalTotal - subTotal; // 端数処理分をTAX込みの調整として表示する場合
+
+            // 6. 表示更新
+            document.getElementById('subTotal').innerText = '¥' + subTotal.toLocaleString();
+            document.getElementById('taxRateDisplay').innerText = (taxRate * 100);
+            
+            // TAX額表示（厳密には端数切り上げ分が含まれるため、差額を表示）
+            document.getElementById('taxAmount').innerText = '¥' + (finalTotal - subTotal).toLocaleString();
+            
+            document.getElementById('finalTotal').innerText = '¥' + finalTotal.toLocaleString();
+        }
+
+        function resetForm() {
+            document.getElementById('customerType').value = 'initial';
+            document.getElementById('entryTime').value = 'early';
+            document.getElementById('nomination').value = '0';
+            document.getElementById('extensionCount').value = '0';
+            document.getElementById('qty_can').value = '0';
+            document.getElementById('qty_pet').value = '0';
+            document.getElementById('qty_shot').value = '0';
+            document.getElementById('qty_coca').value = '0';
+            calculate();
+        }
+
+        // 初期計算
+        calculate();
+    </script>
+</body>
+</html>
